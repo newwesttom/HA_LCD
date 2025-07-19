@@ -292,14 +292,18 @@ while(1):
             if scrollpos != (len(states) -4):
                 scrollpos = scrollpos + 1
             draw_table(labels, states)
+            LCD.circle(100, 60, 20 , c=1, f=True)
+            LCD.show() 
             
         if(key2.value() == 0):
             print("2")
             if scrollpos > 0:
                 scrollpos = scrollpos - 1
             draw_table(labels, states)
-                
+            LCD.circle(100, 60, 20 , c=1, f=True)
+            LCD.show()    
         time.sleep(1)
+
 
 
 
