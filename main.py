@@ -2,7 +2,10 @@ from machine import Pin, SPI, PWM
 import network
 import time
 import urequests
-from HA_CONFIG.py import BASE_URL, TOKEN
+from HA_CONFIG import BASE_URL, TOKEN, labels, states
+from WIFI_CONFIG import SSID, PASSWORD, firmware_url
+import random
+from ota import OTAUpdater
 
 # Initialize LCD and backlight - These settings are for the waveshare pico 1.14" LCD
 BL = 13
@@ -22,12 +25,11 @@ key4 = Pin(16 ,Pin.IN,Pin.PULL_UP)#左
 key5 = Pin(18 ,Pin.IN,Pin.PULL_UP)#下
 key6 = Pin(20 ,Pin.IN,Pin.PULL_UP)#右
 
+backgroundcolor = 0x000099
 # Initialize Startup States
-states = [state1, state2, state3, state4]
-labels = [label1, label2, label3, label4]
-for i in init_states:
-    init_states[i] = 'NA'
-    init_labels[i] = 'NA'
+statetxt = ['NA', 'NA', 'NA', 'NA']
+labeltxt = ['NA', 'NA', 'NA', 'NA']
+scrollpos = 0
 changed = 0    
 
 import framebuf
@@ -150,6 +152,7 @@ class LCD_1inch14(framebuf.FrameBuffer):
 def connect_wifi(ssid, password):
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    print("Trying: " + SSID)
     wlan.connect(ssid, password)
     while not wlan.isconnected():
         time.sleep(0.5)
@@ -164,38 +167,43 @@ def get_entity_state(entity_id, token, base_url):
         "Content-Type": "application/json"
     }
 
-
     url = base_url + "/api/states/" + entity_id
-    response = urequests.get(url, headers=headers)
-    if response.status_code == 200:
-        data = response.json()
-        return data["state"]
-    else:
-        return "Error"
-    response.close()
-    gc.collect()
+    #print("URL: " + url)
 
-def draw_table(row_count,l1,v1,l2,v2,l3,v3,l4,v4):
+    try:
+        response = urequests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            result = data["state"]
+        else:
+            result = "Error"
+        response.close()
+        return result
+    except Exception as e:
+        print("Request failed:", e)
+        return "Error"
+
+
+def draw_table(labels, values):
+    row_count = len(labeltxt)
     x1 = 1
     y1 = 1
     n = 133
     rowsize = n // row_count
-    print(rowsize) #debug
-    
-    values = [v1,v2,v3,v4]
-    labels = [l1,l2,l3,l4]
-    
-    for i in range(len(values)):
-        if values[i] in ['on', 'off']:
-            values[i] = convert_door_value(values[i])
+      
+    for i in range(len(statetxt)):
+        ii = i + scrollpos
+        if statetxt[i] in ['on', 'off']:
+            statetxt[i] = convert_door_value(statetxt[i])
         
-    LCD.fill(LCD.red)
+    LCD.fill(backgroundcolor)
     LCD.vline(104,1,133, 0xbbbb)
     for i in range(row_count):
+        ii = i + scrollpos #adjust for scroll postiion
         LCD.hline(1, y1, 238, 0xaaaa)
         LCD.circle(2, y1+20, 8 , c=1, f=True)
-        display_state(15,y1+10, labels[i]) #Write labels to LCD         
-        display_state(112,y1+10, values[i]) #Write states to LCD
+        display_state(15,y1+10, labeltxt[i]) #Write labels to LCD         
+        display_state(112,y1+10, statetxt[i]) #Write states to LCD
         
         y1 = y1 + rowsize
     LCD.show()
@@ -216,45 +224,83 @@ def convert_door_value(v):
     
 def get_HA():
     # Home Assistant
-    for i in states:
-        entity_label = "input_text.picotext_label" + i
-        labels[i] = get_entity_state(entity_label, TOKEN, BASE_URL)    
-    for i in states:
-        entity = "input_text.picotext_value" + i
-        states[i] = get_entity_state(entity, TOKEN, BASE_URL)
-    draw_table(4, labels[1], states[1], labels[2], states[2], labels[3], states[3], labels[4], states[4])
+    for i in 0,1,2,3:
+        print("scroll:" + str(scrollpos))
+        labeltxt[i] = get_entity_state(labels[i + scrollpos], TOKEN, BASE_URL)
+        print(scrollpos)
+        statetxt[i] = get_entity_state(states[i + scrollpos], TOKEN, BASE_URL)
+    draw_table(labels, states)
+
+
+
+
+
+def random_hex_color():
+    r = random.randint(0, 255)
+    g = random.randint(0, 255)
+    b = random.randint(0, 255)
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+
+# Example usage
+
+
 
 
 #Main Program
 
 LCD = LCD_1inch14()
+print("LCD init")
+
+connect_wifi(SSID, PASSWORD)
+ota_updater = OTAUpdater(SSID, PASSWORD, firmware_url, "test.py")
+ota_updater.download_and_install_update_if_available()
+
 
 get_HA() # connect to HA and get the states. #Initial Values to compare in the while loop below.
 
 while(1):
-    #if(keyA.value() == 0):
-        s1 = [states[1],states[2],states[3],states[4]]
-        l1 = [labels[1],labels[2],labels[3],labels[4]]
-        get_HA() # connect to HA and get the states.
 
-        #test is values changed
-        for i in range(len(s1)):   
-           
-           if s1[i] != states[i]: 
-                changed = 1
-            else:
-                changed = 0
-                
-            if changed != 0:   
-                if l1[i] != labels[i]: 
-                    changed = 1
-                else:
-                    changed = 0
-                    
-        if changed == 1:
-            draw_table(4, labels[1], states[1], labels[2], states[2], labels[3], states[3], labels[4], states[4])
+    s1 = [states[0],states[1],states[2],states[3]]
+    l1 = [labels[0],labels[1],labels[2],labels[3]]
+    get_HA() # connect to HA and get the states.
+
+    #test if values changed
+    for i in range(len(s1)):   
+       
+       if s1[i] != states[i]: 
+           changed = 1
+       else:
+           changed = 0
             
-        time.sleep(3)
+       if changed != 0:   
+           if l1[i] != labels[i]: 
+               changed = 1
+           else:
+               changed = 0
+                
+    if changed == 1:
+       draw_table(4, labels[1], states[1], labels[2], states[2], labels[3], states[3], labels[4], states[4])
+        
+    for i in range(0,9):
+        if(keyA.value() == 0):
+            connect_wifi(SSID, PASSWORD)
+        if(keyB.value() == 0):
+            backgroundcolor = random_hex_color()
+            draw_table(labels, states)
+        if(key5.value() == 0):
+            print("5")
+            if scrollpos != (len(states) -4):
+                scrollpos = scrollpos + 1
+            draw_table(labels, states)
+            
+        if(key2.value() == 0):
+            print("2")
+            if scrollpos > 0:
+                scrollpos = scrollpos - 1
+            draw_table(labels, states)
+                
+        time.sleep(1)
+
 
 
 
